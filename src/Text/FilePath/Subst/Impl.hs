@@ -6,11 +6,8 @@ module Text.FilePath.Subst.Impl where
 
 import           "mtl" Control.Monad.Except
 import qualified "regex" Text.RE.TDFA.String as R
-import qualified "regex" Text.RE.Types.Capture as R
-import qualified "regex" Text.RE.Types.CaptureID as R
-import qualified "regex" Text.RE.Types.Match as R
-import qualified "regex" Text.RE.Types.REOptions as R
-import qualified "regex" Text.RE.Types.Replace as R
+import qualified "regex" Text.RE.REOptions as R
+import qualified "regex" Text.RE.Replace as R
 import           "base" Control.Applicative
 import           "base" Control.Monad
 import qualified "text" Data.Text as Text
@@ -24,7 +21,7 @@ data Subst = Subst R.RE deriving ()
 
 compile :: (MonadError String m)=> String -> m Subst
 compile = fmap Subst
-        . either throwError (R.compileRegex . sourceRegex)
+        . either throwError (R.compileRegexWith R.BlockSensitive . sourceRegex)
         . parseOnly sourcePattern . Text.pack
 
 quoteSource :: String -> String
@@ -170,6 +167,7 @@ globSpec = char '*' *> choice [ char '*' *> pure GlobDouble
 captureId = choice [ CaptureNamed . Text.pack <$> many1 letter
                    , pure CapturePositional
                    ]
+
 
 literal = Text.pack <$> many1 literalChar
 literalChar = choice

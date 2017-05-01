@@ -35,6 +35,8 @@ testSuite =
     [ "Source parsing" ~: testSourceParsing
     , "Target parsing" ~: testTargetParsing
     , "Substitution"   ~: testSubst
+    , testSubstIntoCaptures
+    , testSubstAgainstCaptures
     , testProperties
     ]
 
@@ -43,6 +45,8 @@ testProperties =
     "Properties" ~:
     [ "Quoted subst" ~: qc propQuotedSubst
     , "Quoted template" ~: qc propQuotedTemplate
+    , "subst vs substIntoFunc" ~: qc propSubstSubstInto
+    , "subst vs substAgainstFunc" ~: qc propSubstSubstAgainst
     ]
 
 testSourceParsing = tree
@@ -160,23 +164,38 @@ testTargetParsing = tree
     pos = TargetCapture CapturePositional
     lit = TargetLiteral
 
+
 testSubst = tree
   where
     tree =
 
-        [ "simple" ~:#
+        [ "literals" ~:#
             [ subst "abc"     "abc"     "abc"     @?= ok "abc"
             , subst "abc"     "repl"    "abc"     @?= ok "repl"
-            , subst "[]"      "[]"      "abc-def" @?= ok "abc-def"
+            ]
+
+        , "capture substitution" ~:#
+            [ subst "[]"      "[]"      "abc-def" @?= ok "abc-def"
             , subst "[]-[]"   "[]-[]"   "abc-def" @?= ok "abc-def"
             , subst "[a]"     "[a]"     "abc-def" @?= ok "abc-def"
             , subst "[a]-[b]" "[a]-[b]" "abc-def" @?= ok "abc-def"
             , subst "[a]-[b]" "[b]-[a]" "abc-def" @?= ok "def-abc"
-            , subst "a/[]/d"         "x/[]/z"      "a/b/c/d" @?= ng
+            ]
+
+        , "glob" ~:#
+            [ subst "a/[]/d"         "x/[]/z"      "a/b/c/d" @?= ng
             , subst "a/[]/[]/d"      "x/[]/[]/z"   "a/b/c/d" @?= ok "x/b/c/z"
             , subst "a/[:**]/d"      "x/[]/z"      "a/b/c/d" @?= ok "x/b/c/z"
             , subst "a/[]/[:**]/e"   "x/[]/[]/z"   "a/b/c/d/e" @?= ok "x/b/c/d/z"
             , subst "a/[:**]/[]/e"   "x/[]/[]/z"   "a/b/c/d/e" @?= ok "x/b/c/d/z"
+            ]
+
+        , "bad capture ref" ~:#
+            -- FIXME looks like regex is too lenient about these
+            [ subst "abc"     "[]"      "abc"     @?= xx -- actual: Just (Just "${1}")
+            , subst "abc-[]"  "[]-[]"   "abc-def" @?= xx -- actual: Just (Just "def-${2}")
+            -- FIXME this throws an exception straight through us
+            , subst "[a]"     "[b]"     "abc"     @?= xx
             ]
 
         , "emptiez" ~:#
@@ -204,14 +223,79 @@ testSubst = tree
     ng = Just Nothing -- No match
     ok = Just . Just  -- Match
 
-propQuotedSubst :: String -> Bool
-propQuotedSubst s = (null s) || (s R.=~ re) == s
+
+propQuotedSubst :: String -> Property
+propQuotedSubst s = (not . null) s ==> (s R.=~ re) === s
   where
     Just (Subst re) = compile (quote s)
 
 -- FIXME this property fails on "\n", probably due to regex mode?
-propQuotedTemplate :: String -> Bool
-propQuotedTemplate s = (null s) || substituted == s
+propQuotedTemplate :: String -> Property
+propQuotedTemplate s = (not . null) s ==> substituted === s
   where
     Just (Just substituted) = subst "[]-[]-[]-[]-[]" repl "a-b-c-d-e"
     repl = quoteTemplate s
+
+substViaSubstInto :: (MonadError String m)=> String -> String -> String -> m (Maybe String)
+substViaSubstInto s t u = do
+    sub <- compile s
+    subInto <- substIntoFunc sub t
+    pure $ subInto u
+
+substViaSubstAgainst :: (MonadError String m)=> String -> String -> String -> m (Maybe String)
+substViaSubstAgainst s t u =
+    compile s >>= \sub ->
+      case substAgainstFunc sub u of
+        Nothing -> pure Nothing
+        Just func -> Just <$> func t
+
+propSubstSubstInto :: String -> String -> String -> Property
+propSubstSubstInto s t u =
+    -- we're already aware that newlines are broken (FIXME)
+    ('\n' `notElem` (s ++ t ++ u))
+    ==> left === right
+  where
+    left :: Either String (Maybe String)
+    left = subst s t u
+    right = substViaSubstInto s t u
+
+propSubstSubstAgainst :: String -> String -> String -> Property
+propSubstSubstAgainst s t u =
+    -- we're already aware that newlines are broken (FIXME)
+    ('\n' `notElem` (s ++ t ++ u))
+    -- subst validates both patterns before attempting to match, while
+    -- substAgainst tests matches after only validating one pattern.
+    -- This results in an expected discrepancy between the two
+    --  for non-matches with invalid replacement patterns.
+    && (case (left, right) of (Left _, Right Nothing) -> False
+                              _______________________ -> True)
+    ==> left === right
+  where
+    left :: Either String (Maybe String)
+    left = subst s t u
+    right = substViaSubstAgainst s t u
+
+
+-- I don't trust that those properties are actually getting any
+-- valid capture groups
+testSubstIntoCaptures =
+    "captures with substViaSubstInto" ~:#
+        [ subst "[]"      "[]"      "abc-def" @?= ok "abc-def"
+        , subst "[]-[]"   "[]-[]"   "abc-def" @?= ok "abc-def"
+        , subst "[a]"     "[a]"     "abc-def" @?= ok "abc-def"
+        , subst "[a]-[b]" "[a]-[b]" "abc-def" @?= ok "abc-def"
+        , subst "[a]-[b]" "[b]-[a]" "abc-def" @?= ok "def-abc"
+        ]
+  where subst = substViaSubstInto
+        ok = Just . Just
+
+testSubstAgainstCaptures =
+    "captures with substViaSubstAgainst" ~:#
+        [ subst "[]"      "[]"      "abc-def" @?= ok "abc-def"
+        , subst "[]-[]"   "[]-[]"   "abc-def" @?= ok "abc-def"
+        , subst "[a]"     "[a]"     "abc-def" @?= ok "abc-def"
+        , subst "[a]-[b]" "[a]-[b]" "abc-def" @?= ok "abc-def"
+        , subst "[a]-[b]" "[b]-[a]" "abc-def" @?= ok "def-abc"
+        ]
+  where subst = substViaSubstAgainst
+        ok = Just . Just

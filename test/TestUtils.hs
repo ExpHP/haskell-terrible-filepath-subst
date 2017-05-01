@@ -24,6 +24,9 @@ module TestUtils
 
     {- RE-EXPORTS: QuickCheck -}
     , Testable
+    , Property(..)
+    , (===)
+    , (==>)
     ) where
 
 import Test.Tasty

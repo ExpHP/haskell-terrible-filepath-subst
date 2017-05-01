@@ -1,5 +1,5 @@
 name:                terrible-filepath-subst
-version:             0.1.0.0
+version:             0.1.0.1
 -- synopsis:
 -- description:
 homepage:            https://github.com/ExpHP/terrible-filepath-subst#readme
@@ -18,10 +18,10 @@ library
   exposed-modules:     Text.FilePath.Subst
                        Text.FilePath.Subst.Impl
   build-depends:       base >= 4.7 && < 5,
-                     , regex >= 0.9.0.0,
-                     , text,
-                     , mtl
-                     , attoparsec,
+                       regex >= 0.12.0.0,
+                       text,
+                       attoparsec,
+                       mtl
   default-language:    Haskell2010
 
 test-suite subst-test
@@ -32,7 +32,7 @@ test-suite subst-test
                        Text.FilePath.SubstTest
   build-depends:       base
                      , attoparsec
-                     , regex >= 0.9.0.0
+                     , regex >= 0.12.0.0
                      , terrible-filepath-subst
                      , text
                      , mtl
